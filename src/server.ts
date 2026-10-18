@@ -54,7 +54,7 @@ app.get('/api/orders/:id', { preHandler: auth }, async (request: any, reply) => 
 });
 app.get('/*', async (_request, reply) => reply.type('text/html').send(await readFile(path.join(publicDir, 'index.html'))));
 
-const port = Number(process.env.PORT || 3000); await app.listen({ port, host: '127.0.0.1' });
+const port = Number(process.env.PORT || 3000); await app.listen({ port, host: '0.0.0.0' });
 console.log(`Mini App running at http://127.0.0.1:${port}`);
 
 if (process.env.TELEGRAM_BOT_TOKEN) {
@@ -68,3 +68,4 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
   bot.launch({ dropPendingUpdates: true }).then(() => app.log.info('Telegram bot started with polling')).catch((error) => app.log.error(error, 'Telegram bot failed to start'));
   process.once('SIGINT', () => bot.stop('SIGINT')); process.once('SIGTERM', () => bot.stop('SIGTERM'));
 } else app.log.warn('TELEGRAM_BOT_TOKEN is not set; bot is disabled');
+
