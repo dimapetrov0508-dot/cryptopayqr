@@ -17,6 +17,7 @@ await app.register(rateLimit, { max: 60, timeWindow: '1 minute' });
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
 const orders = new Map<string, { id: string; userId: number; amountRub: number; network: Network; status: PaymentStatus; createdAt: string; txHash?: string }>();
+const processedEvents = new Set<string>();
 
 function validateTelegramInitData(raw: string, botToken: string): Record<string, string> {
   const params = new URLSearchParams(raw); const hash = params.get('hash');
@@ -50,9 +51,17 @@ app.post('/api/orders', { preHandler: auth }, async (request: any, reply) => {
   return reply.code(201).send({ orderId: id, amountRub: order.amountRub, status: order.status, demo: true });
 });
 app.post('/api/webhooks/chain', async (request: any, reply) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret) {
+    const signature = String(request.headers['x-webhook-signature'] || '');
+    const raw = JSON.stringify(request.body ?? {});
+    const expected = createHmac('sha256', secret).update(raw).digest('hex');
+    if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return reply.code(401).send({ error: 'Invalid signature' });
+  }
   const body = z.object({ orderId: z.string().uuid(), event: z.enum(['tx_detected','confirmations_complete','expired','error']), txHash: z.string().max(200).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: 'Invalid webhook' });
   const order = orders.get(body.data.orderId); if (!order) return reply.code(404).send({ error: 'Order not found' });
+  const eventId = `${body.data.orderId}:${body.data.event}:${body.data.txHash || ''}`; if (processedEvents.has(eventId)) return { ok: true, duplicate: true, status: order.status }; processedEvents.add(eventId);
   const oldStatus = order.status; order.status = nextStatus(order.status, body.data.event); if (body.data.txHash) order.txHash = body.data.txHash;
   return { ok: true, orderId: order.id, previousStatus: oldStatus, status: order.status };
 });
