@@ -15,3 +15,5 @@ npm run dev
 ## Постоянный запуск
 
 В репозитории есть `Dockerfile` и `render.yaml` для Render. После публикации сервиса задайте в переменных окружения `TELEGRAM_BOT_TOKEN` и `PUBLIC_URL` равным HTTPS-адресу Render.
+
+Схема PostgreSQL находится в `schema.sql`. До подключения боевого провайдера используется `DemoFiatProvider`; он не переводит реальные деньги.
