@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { Telegraf, Markup } from 'telegraf';
+import { assertNetwork, type Network, type PaymentStatus, nextStatus } from './payment.js';
 
 const app = Fastify({ logger: true, trustProxy: false });
 await app.register(helmet, { contentSecurityPolicy: false });
@@ -15,7 +16,7 @@ await app.register(rateLimit, { max: 60, timeWindow: '1 minute' });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const orders = new Map<string, { id: string; userId: number; amountRub: number; status: 'pending'|'paid'; createdAt: string }>();
+const orders = new Map<string, { id: string; userId: number; amountRub: number; network: Network; status: PaymentStatus; createdAt: string; txHash?: string }>();
 
 function validateTelegramInitData(raw: string, botToken: string): Record<string, string> {
   const params = new URLSearchParams(raw); const hash = params.get('hash');
@@ -43,10 +44,17 @@ app.post('/api/payments/quote', { preHandler: auth }, async (request: any, reply
 });
 app.get('/api/me', { preHandler: auth }, async (request: any) => ({ id: request.user.id, username: request.user.username }));
 app.post('/api/orders', { preHandler: auth }, async (request: any, reply) => {
-  const body = z.object({ amountRub: z.number().int().positive().max(1_000_000) }).safeParse(request.body);
+  const body = z.object({ amountRub: z.number().int().positive().max(1_000_000), network: z.enum(['TRC20','BEP20']).default('TRC20') }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: 'Invalid amount' });
-  const id = randomUUID(); const order = { id, userId: Number(request.user.id), amountRub: body.data.amountRub, status: 'pending' as const, createdAt: new Date().toISOString() }; orders.set(id, order);
+  const id = randomUUID(); const order = { id, userId: Number(request.user.id), amountRub: body.data.amountRub, network: assertNetwork(body.data.network), status: 'created' as PaymentStatus, createdAt: new Date().toISOString() }; orders.set(id, order);
   return reply.code(201).send({ orderId: id, amountRub: order.amountRub, status: order.status, demo: true });
+});
+app.post('/api/webhooks/chain', async (request: any, reply) => {
+  const body = z.object({ orderId: z.string().uuid(), event: z.enum(['tx_detected','confirmations_complete','expired','error']), txHash: z.string().max(200).optional() }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: 'Invalid webhook' });
+  const order = orders.get(body.data.orderId); if (!order) return reply.code(404).send({ error: 'Order not found' });
+  const oldStatus = order.status; order.status = nextStatus(order.status, body.data.event); if (body.data.txHash) order.txHash = body.data.txHash;
+  return { ok: true, orderId: order.id, previousStatus: oldStatus, status: order.status };
 });
 app.get('/api/orders/:id', { preHandler: auth }, async (request: any, reply) => {
   const order = orders.get(request.params.id); if (!order || order.userId !== Number(request.user.id)) return reply.code(404).send({ error: 'Order not found' });
